@@ -18,7 +18,7 @@ stages:
 variables:
   PYTHONUNBUFFERED: "1"
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
-  SENTINEL_BACKEND_URL: "http://sentinel-backend:8000"
+  SENTINEL_BACKEND_URL: "https://krishnasingh9054-sentinel-backend.hf.space"   # public, read-only to browsers; writes need the masked SENTINEL_HMAC_SECRET
   # SENTINEL_HMAC_SECRET is deliberately NOT set here: this repo is public. Define it as a
   # protected + masked project variable (same value as the backend's secret).
   GCP_PROJECT_ID: "project-sentinel-hackathon"
