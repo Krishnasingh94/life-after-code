@@ -124,7 +124,9 @@ test:sentinel-gates:
     - pip install -r backend/requirements.txt pytest pytest-cov
   script:
     - echo "==> Running Sentinel Gates test suite (Integrity Gate, Regression Proof, Evaluator, SAST, Statistical Analyzer, Chaos, Supply Chain)"
-    - pytest -v --junitxml=junit-sentinel.xml tests/
+    # tests/regressions/ holds repair-MR tests for the demo app; gate:regression-proof runs them against
+    # the right commits. Run here they would import the backend's `app` package instead.
+    - pytest -v --junitxml=junit-sentinel.xml tests/ --ignore=tests/regressions
   artifacts:
     when: always
     reports:
@@ -530,5 +532,6 @@ merge:auto-merge:
   script:
     - echo "==> All required gates green. Merging with the project token (GITLAB_PROJECT_TOKEN, masked)"
     - python sentinel/scripts/auto_merge.py --project-id "$CI_PROJECT_ID" --mr-iid "$CI_MERGE_REQUEST_IID" --fix-sha "$CI_COMMIT_SHA" --incident-id "${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME#duo/fix/}"
+  # Only where a project token is configured; otherwise a person merges the MR after the gates pass.
   rules:
-    - if: $CI_MERGE_REQUEST_IID && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^duo\/fix\//
+    - if: $CI_MERGE_REQUEST_IID && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^duo\/fix\// && $GITLAB_PROJECT_TOKEN
