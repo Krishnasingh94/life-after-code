@@ -30,8 +30,10 @@ export async function getJSON(path: string, signal?: AbortSignal): Promise<unkno
   signal?.addEventListener('abort', () => ctrl.abort());
   try {
     const res = await fetch(`${API_BASE}${path}`, { signal: ctrl.signal, headers: { Accept: 'application/json' } });
-    if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`);
     const type = res.headers.get('content-type') ?? '';
+    // The dev proxy answers 5xx with an empty body when nothing listens on the backend port.
+    if (!res.ok && res.status >= 500 && !type.includes('json')) throw new ApiError(0, 'The backend is not running (nothing answered on its port)');
+    if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`);
     if (!type.includes('json')) throw new ApiError(502, 'The API did not answer with JSON');
     return await res.json();
   } catch (e) {
@@ -51,3 +53,11 @@ export const getEBPFTelemetry = (signal?: AbortSignal) => getJSON('/api/v1/sre/e
 export const getDisasterRecoveryStatus = (signal?: AbortSignal) => getJSON('/api/v1/sre/dr', signal) as Promise<DisasterRecoveryStatus>;
 export const getAdaptiveDriftStatus = (signal?: AbortSignal) => getJSON('/api/v1/sre/drift', signal) as Promise<AdaptiveDriftStatus>;
 export const getS3StorageStatus = (signal?: AbortSignal) => getJSON('/api/v1/state/storage', signal) as Promise<S3StorageStatus>;
+
+export const getCanaryDiffRisk = (signal?: AbortSignal) => getJSON('/api/v1/sre/diff-risk', signal) as Promise<import('./types').DiffRiskReport>;
+export const getShadowTrafficReplay = (incidentId?: string, signal?: AbortSignal) =>
+  getJSON(`/api/v1/sre/shadow-replay?incident_id=${encodeURIComponent(incidentId ?? 'inc-demo-003')}`, signal) as Promise<import('./types').ShadowReplayReport>;
+export const getMeasuredCarbon = (signal?: AbortSignal) => getJSON('/api/v1/sre/carbon', signal) as Promise<import('./types').MeasuredCarbonReport>;
+export const getIncidentPostmortem = (incidentId: string, signal?: AbortSignal) =>
+  getJSON(`/api/v1/incidents/${encodeURIComponent(incidentId)}/postmortem`, signal) as Promise<import('./types').PostmortemBundle>;
+
