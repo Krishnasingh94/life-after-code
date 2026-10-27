@@ -42,8 +42,10 @@ TIER_RATES = {
 
 
 def calculate_discount(customer_tier: str, subtotal: float) -> float:
-    """Tier discount: direct lookup in TIER_RATES."""
-    return round(subtotal * TIER_RATES[customer_tier], 2)
+    """Tier discount. Tier names arrive from many clients in any casing, so they
+    are normalised; unknown tiers get no discount."""
+    rate = TIER_RATES.get(customer_tier.strip().lower(), 0.0)
+    return round(subtotal * rate, 2)
 
 
 @router.post("", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
