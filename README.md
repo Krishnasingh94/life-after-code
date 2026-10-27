@@ -104,6 +104,7 @@ Open items and team status are in [docs/REMAINING.md](docs/REMAINING.md).
 - The recorded run used the `local` deploy mode. The Cloud Run path is implemented and unit-tested with a fake `gcloud`, but it was not part of the recorded run.
 - Some panels on the System page (saboteur, candidates, shadow replay, carbon) show simulated, reference or derived values. Each panel is labelled with its data source, and no unmeasured value is presented as measured.
 - The Duo analysis is advisory. Only the gates count as proof.
+- In the recorded run no Sentinel backend was reachable from GitLab CI, so the jobs logged "could not emit" and carried on. Mission Control was shown against a local backend. MR !1 was merged by a person after both gates passed, because no `GITLAB_PROJECT_TOKEN` was set for auto-merge.
 
 ## Team
 
