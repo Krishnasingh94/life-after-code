@@ -13,6 +13,7 @@ stages:
   - evidence
   - gate-verify
   - auto-merge
+  - publish
 
 variables:
   PYTHONUNBUFFERED: "1"
@@ -535,3 +536,26 @@ merge:auto-merge:
   # Only where a project token is configured; otherwise a person merges the MR after the gates pass.
   rules:
     - if: $CI_MERGE_REQUEST_IID && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^duo\/fix\// && $GITLAB_PROJECT_TOKEN
+
+# ==============================================================================
+# PUBLISH: Mission Control on GitLab Pages (public link, no backend)
+# ==============================================================================
+# The public site runs in the labelled demo mode (scripted data, in the browser). There is no public
+# Sentinel backend: live data appears only when the dashboard runs next to a backend (see README).
+pages:
+  stage: publish
+  image: node:20-slim
+  needs: []
+  script:
+    - cd frontend
+    - npm ci --no-audit --no-fund
+    - npm run build -- --base ./
+    # Open the demo scenario by default, so a visitor never sees an empty "no backend" console.
+    - sed -i 's#<head>#<head><script>if(!location.search){location.replace("?demo"+location.hash)}</script>#' dist/index.html
+    - cd .. && rm -rf public && cp -r frontend/dist public
+  artifacts:
+    paths:
+      - public
+  allow_failure: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
