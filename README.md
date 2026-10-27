@@ -26,6 +26,8 @@ The AI can never mark a repair as successful, bypass a gate, or make a failing p
 | On the MR, the regression proof is **PROVEN** and the Integrity Gate gives **PASS** | [pipeline 2992662315](https://gitlab.com/gitlab-ai-hackathon/transcend-october-2026/43057900/showcase/-/pipelines/2992662315) |
 | After the merge, the merge commit passes the canary: 0.00 % errors on the candidate, against 16.67 % on the old broken release | [pipeline 2992674535](https://gitlab.com/gitlab-ai-hackathon/transcend-october-2026/43057900/showcase/-/pipelines/2992674535) |
 
+Full technical documentation, with diagrams: [docs/TECHNICAL.md](docs/TECHNICAL.md).
+
 ## Repository
 
 | Path | What it is | Owner |
