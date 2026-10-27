@@ -383,9 +383,22 @@ canary:local-evaluate:
     - echo "==> No cloud deployment (SENTINEL_DEPLOY_MODE=local). Candidate $CI_COMMIT_SHORT_SHA vs stable $(echo $STABLE_SHA | cut -c1-8), both started in this job"
     - git worktree add -q --detach /tmp/stable "$STABLE_SHA"
     - (cd /tmp/stable/app && uvicorn app.main:app --host 127.0.0.1 --port 8080 > /tmp/stable.log 2>&1 &)
-    - (cd app && uvicorn app.main:app --host 127.0.0.1 --port 8081 > /tmp/candidate.log 2>&1 &)
+    - (cd app && exec uvicorn app.main:app --host 127.0.0.1 --port 8081 > /tmp/candidate.log 2>&1 & echo $! > /tmp/candidate.pid)
     - for i in $(seq 1 30); do curl -sf http://127.0.0.1:8080/healthz > /dev/null && curl -sf http://127.0.0.1:8081/healthz > /dev/null && break; sleep 1; done
-    - python sentinel/scripts/evaluator.py --candidate-url http://127.0.0.1:8081 --stable-url http://127.0.0.1:8080 --traffic-percent 100 --revision-name "local-$CI_COMMIT_SHORT_SHA" --pipeline-id "$CI_PIPELINE_ID" --job-id "$CI_JOB_ID" --commit-sha "$CI_COMMIT_SHA"
+    # Local "deploy": the candidate is running. Reported like the Cloud Run canary deploy (best effort).
+    - >-
+      python sentinel/scripts/emit_event.py --type deploy.canary_started --source sentinel-canary-deploy:local
+      --pipeline-id "$CI_PIPELINE_ID" --job-id "$CI_JOB_ID" --commit-sha "$CI_COMMIT_SHA"
+      --data "{\"revision_name\": \"local-$CI_COMMIT_SHORT_SHA\", \"traffic_percent\": 100, \"target\": \"candidate\"}"
+      || echo "[!] could not emit deploy.canary_started (no reachable backend); continuing"
+    # On a breach: stop the candidate, prove the stable app healthy (rollback.completed), then fail the job.
+    - |
+      if ! python sentinel/scripts/evaluator.py --candidate-url http://127.0.0.1:8081 --stable-url http://127.0.0.1:8080 --traffic-percent 100 --revision-name "local-$CI_COMMIT_SHORT_SHA" --pipeline-id "$CI_PIPELINE_ID" --job-id "$CI_JOB_ID" --commit-sha "$CI_COMMIT_SHA"; then
+        echo "==> Canary breached. Stopping the candidate; the previous release keeps serving."
+        kill "$(cat /tmp/candidate.pid)" 2>/dev/null || true
+        python sentinel/scripts/rollback.py --local --stable-url http://127.0.0.1:8080 --known-good-rev "local-$(echo $STABLE_SHA | cut -c1-8)" --candidate-rev "local-$CI_COMMIT_SHORT_SHA" --pipeline-id "$CI_PIPELINE_ID" --job-id "$CI_JOB_ID" --commit-sha "$CI_COMMIT_SHA" || true
+        exit 1
+      fi
   artifacts:
     when: always
     paths:
@@ -549,9 +562,17 @@ pages:
   script:
     - cd frontend
     - npm ci --no-audit --no-fund
-    - npm run build -- --base ./
-    # Open the demo scenario by default, so a visitor never sees an empty "no backend" console.
-    - sed -i 's#<head>#<head><script>if(!location.search){location.replace("?demo"+location.hash)}</script>#' dist/index.html
+    # With a public backend (SENTINEL_BACKEND_URL is https), the site shows live data from it.
+    # Without one, it opens the labelled demo scenario instead of an empty "no backend" console.
+    - |
+      case "$SENTINEL_BACKEND_URL" in
+        https://*)
+          export VITE_API_BASE="$SENTINEL_BACKEND_URL" VITE_GITLAB_PROJECT_URL="$CI_PROJECT_URL"
+          npm run build -- --base ./ ;;
+        *)
+          npm run build -- --base ./
+          sed -i 's#<head>#<head><script>if(!location.search){location.replace("?demo"+location.hash)}</script>#' dist/index.html ;;
+      esac
     - cd .. && rm -rf public && cp -r frontend/dist public
   artifacts:
     paths:
