@@ -1,33 +1,20 @@
 # Project Sentinel
 
-**When a release goes bad, Sentinel catches it in the canary, rolls it back and collects the evidence. A GitLab Duo flow then proposes a fix together with a regression test. The fix merges only after deterministic gates prove that it works.**
+**AI proposes. Deterministic gates decide. Production evidence proves the outcome.**
 
-Core rule: **AI proposes; deterministic gates decide.** The Duo flow can read evidence and open a merge request. It cannot merge, deploy, run tests or mark an incident as recovered. Each of those steps is done by a CI job, and every job's result is signed and recorded.
+Sentinel is a deployment-safety and production-recovery loop built on GitLab for the GitLab Transcend
+"Life After Code" hackathon (Path A). When a release makes the running service unhealthy, Sentinel:
 
-This is our entry for the GitLab Transcend hackathon (Life After Code). It is MIT licensed.
+1. detects it with measured health signals from a canary;
+2. rolls back to the last known-good release, and a probe confirms the rollback;
+3. seals a redacted evidence bundle (SHA-256);
+4. asks a **GitLab Duo flow** to investigate and propose a fix plus a regression test, as a merge request;
+5. **proves** the fix with deterministic gates:
+   - the new test must fail with an assertion on the broken commit and pass on the fix;
+   - the Integrity Gate blocks any attempt to weaken or skip tests;
+6. merges and redeploys through a canary, and records **RECOVERED** only when the post-redeploy evaluator says so.
 
-## The loop
-
-```
-push ─▶ lint / tests / security ─▶ canary evaluate ─FAIL─▶ rollback ─▶ evidence:collect
-                                        │                                    │
-                                      PASS                       "pipeline failed" event
-                                        ▼                                    ▼
-                                     promote               Duo flow: investigator ─▶ repairer
-                                                                             │
-                                                 MR: fix + regression test + analysis.json
-                                                                             ▼
-                                   gate:regression-proof  (new test FAILS on broken, PASSES on fix)
-                                   gate:integrity-gate    (no weakened tests, no skips, no CI edits)
-                                                                             ▼
-                                         merge ─▶ pipeline on merge commit ─▶ canary PASS ─▶ RECOVERED
-```
-
-Each step sends an HMAC-signed event to the Sentinel backend. The backend runs an evidence-gated state machine:
-
-`DETECTED → ROLLED_BACK → EVIDENCE_COLLECTED → INVESTIGATING → REPAIR_PROPOSED → VERIFYING → MERGED → REDEPLOYING → RECOVERED`
-
-The backend refuses any transition that arrives without its required evidence, and logs the refusal. For example, if an AI message claims the incident is "recovered", that claim is refused.
+The AI can never mark a repair as successful, bypass a gate, or make a failing pipeline look green.
 
 ## Evidence: a real run on this project
 
@@ -39,19 +26,17 @@ The backend refuses any transition that arrives without its required evidence, a
 | On the MR, the regression proof is **PROVEN** and the Integrity Gate gives **PASS** | [pipeline 2992662315](https://gitlab.com/gitlab-ai-hackathon/transcend-october-2026/43057900/showcase/-/pipelines/2992662315) |
 | After the merge, the merge commit passes the canary: 0.00 % errors on the candidate, against 16.67 % on the old broken release | [pipeline 2992674535](https://gitlab.com/gitlab-ai-hackathon/transcend-october-2026/43057900/showcase/-/pipelines/2992674535) |
 
-## What is in the repo
+## Repository
 
-| Path | Contents |
-|---|---|
-| `app/` | The demo service, a FastAPI orders API, which Sentinel releases, breaks and repairs |
-| `backend/` | The Sentinel backend (FastAPI + SQLite): signed event intake, the incident state machine, GitLab webhooks and the audit ledger |
-| `frontend/` | The Mission Control dashboard (React + Vite), with pages for rollout, incidents, gates, the ledger and system status |
-| `sentinel/scripts/` | The pipeline scripts: `evaluator.py`, `canary_deploy.py`, `rollback.py`, `evidence_collector.py`, `regression_proof.py`, `integrity_gate.py`, `report_gate_verdict.py` and `auto_merge.py`, plus the security, FinOps and governance gates |
-| `.gitlab/duo/flows/sentinel-investigate-repair.yml` | The GitLab Duo Agent Platform flow, made of an investigator and a repairer (see `docs/duo-flow.md`) |
-| `.gitlab-ci.yml` | The pipeline |
-| `docs/contracts/` | JSON schemas for events, evidence bundles and analyses |
-| `infra/` | Terraform for the Cloud Run deployment |
-| `tests/`, `backend/tests/`, `app/tests/` | The test suites |
+| Path | What it is | Owner |
+|---|---|---|
+| `app/` | Demo target service (FastAPI orders API). `docs/demo/fault-discount-lookup.patch` is the seeded fault | Krishna |
+| `backend/` | Sentinel API: HMAC-signed CI event ingestion, evidence-gated state machine, read API for the UI | Krishna |
+| `frontend/` | Mission Control: seven read-only consoles plus a labelled demo mode | Samvit |
+| `.gitlab/duo/flows/` | Duo investigation + repair flow ([setup](docs/duo-flow.md)) | Samvit |
+| `sentinel/scripts/` | Regression proof, Integrity Gate, gate reporting (Samvit); evaluator, rollback, evidence, auto-merge, emitter (Kailash) | Team |
+| `.gitlab-ci.yml`, `infra/` | Pipeline and Terraform for Cloud Run | Kailash |
+| `docs/contracts/` | OpenAPI, event, analysis and evidence-bundle schemas | Team |
 
 ## Deploy modes
 
@@ -69,31 +54,50 @@ The deploy mode is set by `SENTINEL_DEPLOY_MODE` in `.gitlab-ci.yml`.
 
 ## Run it locally
 
-You need Python 3.11+ and Node 18+. On Windows, use `127.0.0.1` rather than `localhost`.
+Requires Python 3.11+ and Node 20+.
 
 ```bash
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
-pip install -r backend/requirements.txt -r app/requirements.txt
+# 1. Demo target app (port 8080)
+cd app && pip install -r requirements.txt && uvicorn app.main:app --port 8080
 
-# tests
-python -m pytest -q backend/tests
-python -m pytest -q app/tests
-python -m pytest -q tests --ignore=tests/regressions
-python scripts/verify.py            # lint + tests + security; ends with [PUSH GATE PASSED]
+# 2. Sentinel backend (port 8000, Swagger at /docs)
+cd backend && pip install -r requirements.txt
+SENTINEL_HMAC_SECRET=<any-local-secret> uvicorn app.main:app --port 8000
 
-# backend (http://127.0.0.1:8000)
-cd backend && python -m uvicorn app.main:app --port 8000
-# dashboard (http://127.0.0.1:5173), in a second terminal
+# 3. Mission Control (http://localhost:5173, proxies /api to :8000)
 cd frontend && npm install && npm run dev
 ```
 
-The dev HMAC and webhook secrets in `backend/app/config.py` are public placeholders, for local use only. On GitLab, set `SENTINEL_BACKEND_URL`, `SENTINEL_HMAC_SECRET` and `GITLAB_PROJECT_TOKEN` as masked CI/CD variables.
+- **Labelled demo without a backend:** open `http://localhost:5173/?demo`, or `?demo=fail` for the path where the gates block the repair.
+- **Drive a real incident through the local backend:**
+  `SENTINEL_API_URL=http://localhost:8000 SENTINEL_HMAC_SECRET=<same> python backend/scripts/smoke_e2e.py`.
+  It sends synthetic events, so never point it at the demo backend.
 
-## Set up the Duo flow on your own GitLab project
+## Tests
 
-1. Go to **Automate → Flows → New flow**. Paste `.gitlab/duo/flows/sentinel-investigate-repair.yml`, then create the flow and enable it.
-2. Go to **Automate → Triggers**. Add a trigger for the flow on **Pipeline: Failed**, and choose a service account with the Developer role.
-3. Apply `docs/demo/fault-discount-lookup.patch`, push it as a normal commit, and watch the loop.
+```bash
+pip install -r backend/requirements.txt -r app/requirements.txt jsonschema pyyaml requests boto3 ruff
+python -m pytest tests          # gates, CI scripts, Duo flow wiring
+(cd backend && python -m pytest)
+(cd app && python -m pytest)
+ruff check .
+(cd frontend && npx tsc -p tsconfig.json --noEmit && npm run build)
+```
+
+## GitLab setup
+
+- **Masked + protected CI/CD variables:**
+  - `SENTINEL_HMAC_SECRET` (same value as the backend's)
+  - `SENTINEL_BACKEND_URL`
+  - `GITLAB_PROJECT_TOKEN` (auto-merge)
+  - Google Cloud credentials via Workload Identity Federation (`infra/iam_wif.tf`)
+- **Backend:**
+  - `GITLAB_PROJECT_ID` and `GITLAB_READ_TOKEN` (to read the AI's `analysis.json`)
+  - `GITLAB_WEBHOOK_SECRET`, and a project webhook for merge-request and pipeline events
+- **Duo flow:** paste `.gitlab/duo/flows/sentinel-investigate-repair.yml` under **Automate → Flows**, then add a
+  **Pipeline: Failed** trigger. Details in [docs/duo-flow.md](docs/duo-flow.md).
+
+Open items and team status are in [docs/REMAINING.md](docs/REMAINING.md).
 
 ## Honest limits
 
@@ -107,6 +111,6 @@ The dev HMAC and webhook secrets in `backend/app/config.py` are public placehold
 - Samvit Srivastava: frontend and AI
 - Kailash Ambadipudi: CI/CD and cloud
 
-## License
+## Licence
 
-MIT. See [LICENSE](LICENSE).
+[MIT](LICENSE)
